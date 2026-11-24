@@ -66,7 +66,7 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
 
-  token-repository:
+  repository:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,9 +78,9 @@ jobs:
           deploy-token: ${{ secrets.DEPLOY_TOKEN }}
           resource-uuid: ${{ env.TARGET_UUID }}
 
-  token-preview:
+  preview:
     runs-on: ubuntu-latest
-    needs: token-repository
+    needs: repository
     environment: preview
     steps:
       - uses: actions/checkout@v4
@@ -92,10 +92,10 @@ jobs:
           deploy-token: ${{ secrets.DEPLOY_TOKEN }}
           resource-uuid: ${{ env.TARGET_UUID }}
 
-  token-production:
+  production:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: token-preview
+    needs: preview
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -111,10 +111,10 @@ jobs:
     if: >-
       ${{ !cancelled()
       && needs.build.result == 'success'
-      && needs.token-preview.result == 'success'
-      && contains(fromJSON('["success", "skipped"]'), needs.token-production.result) }}
+      && needs.preview.result == 'success'
+      && contains(fromJSON('["success", "skipped"]'), needs.production.result) }}
     runs-on: ubuntu-latest
-    needs: [build, token-preview, token-production]
+    needs: [build, preview, production]
     steps:
       - name: Trigger Coolify deployment
         env:
