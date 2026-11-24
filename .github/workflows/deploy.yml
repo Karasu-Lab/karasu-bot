@@ -59,6 +59,6 @@ jobs:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           RESOURCE_UUID: ${{ vars.RESOURCE_UUID }}
         run: |
-          curl --fail --silent --show-error --request GET \
+          curl --fail --silent --show-error --request POST \
             --header "Authorization: Bearer ${DEPLOY_TOKEN}" \
             "${DEPLOY_HOST}/api/v1/deploy?uuid=${RESOURCE_UUID}&force=false"
