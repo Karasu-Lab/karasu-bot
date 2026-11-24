@@ -3,14 +3,17 @@ name: Deploy
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 concurrency:
-  group: deploy
+  group: deploy-${{ github.event.pull_request.number || 'production' }}
   cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
+  IS_PREVIEW: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -34,16 +37,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve image name and commit hash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          SHA="${PR_HEAD_SHA:-$GITHUB_SHA}"
           echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "COMMIT_HASH=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "COMMIT_HASH=${SHA::7}" >> "$GITHUB_ENV"
 
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ env.IS_PREVIEW == 'false' }}
+            type=ref,event=pr
             type=sha
 
       - uses: docker/build-push-action@v6
@@ -58,31 +65,70 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
 
-  deploy:
+  token-repository:
     runs-on: ubuntu-latest
-    needs: build
     steps:
-      - name: Sync runtime environment variables to Coolify
-        env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          RESOURCE_UUID: ${{ vars.RESOURCE_UUID }}
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        run: |
-          jq -n --arg token "${BOT_TOKEN}" \
-            '{data: [{key: "BOT_TOKEN", value: $token, is_runtime: true, is_buildtime: false}]}' |
-          curl --fail --silent --show-error --request PATCH \
-            --header "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data @- \
-            "${DEPLOY_HOST}/api/v1/applications/${RESOURCE_UUID}/envs/bulk"
+      - uses: actions/checkout@v4
 
+      - uses: ./.github/actions/sync-bot-token
+        with:
+          bot-token: ${{ secrets.BOT_TOKEN }}
+          deploy-host: ${{ vars.DEPLOY_HOST }}
+          deploy-token: ${{ secrets.DEPLOY_TOKEN }}
+          resource-uuid: ${{ vars.RESOURCE_UUID }}
+          is-preview: ${{ env.IS_PREVIEW }}
+
+  token-preview:
+    runs-on: ubuntu-latest
+    needs: token-repository
+    environment: preview
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/sync-bot-token
+        with:
+          bot-token: ${{ secrets.BOT_TOKEN }}
+          deploy-host: ${{ vars.DEPLOY_HOST }}
+          deploy-token: ${{ secrets.DEPLOY_TOKEN }}
+          resource-uuid: ${{ vars.RESOURCE_UUID }}
+          is-preview: ${{ env.IS_PREVIEW }}
+
+  token-production:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    needs: token-preview
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/sync-bot-token
+        with:
+          bot-token: ${{ secrets.BOT_TOKEN }}
+          deploy-host: ${{ vars.DEPLOY_HOST }}
+          deploy-token: ${{ secrets.DEPLOY_TOKEN }}
+          resource-uuid: ${{ vars.RESOURCE_UUID }}
+          is-preview: ${{ env.IS_PREVIEW }}
+
+  deploy:
+    if: >-
+      ${{ !cancelled()
+      && needs.build.result == 'success'
+      && needs.token-preview.result == 'success'
+      && contains(fromJSON('["success", "skipped"]'), needs.token-production.result) }}
+    runs-on: ubuntu-latest
+    needs: [build, token-preview, token-production]
+    steps:
       - name: Trigger Coolify deployment
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           RESOURCE_UUID: ${{ vars.RESOURCE_UUID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          QUERY="uuid=${RESOURCE_UUID}&force=false"
+          if [ "${IS_PREVIEW}" = "true" ]; then
+            QUERY="${QUERY}&pull_request_id=${PR_NUMBER}&docker_tag=pr-${PR_NUMBER}"
+          fi
           curl --fail --silent --show-error --request POST \
             --header "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            "${DEPLOY_HOST}/api/v1/deploy?uuid=${RESOURCE_UUID}&force=false"
+            "${DEPLOY_HOST}/api/v1/deploy?${QUERY}"

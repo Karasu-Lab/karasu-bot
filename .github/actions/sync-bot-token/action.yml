@@ -1,0 +1,37 @@
+name: Sync BOT_TOKEN to Coolify
+description: Upsert BOT_TOKEN as a runtime environment variable of the Coolify resource. Does nothing when the token is empty.
+
+inputs:
+  bot-token:
+    description: Token to store
+    required: false
+    default: ""
+  deploy-host:
+    required: true
+  deploy-token:
+    required: true
+  resource-uuid:
+    required: true
+  is-preview:
+    description: Store the variable for preview deployments
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - if: ${{ inputs.bot-token != '' }}
+      shell: bash
+      env:
+        BOT_TOKEN: ${{ inputs.bot-token }}
+        DEPLOY_HOST: ${{ inputs.deploy-host }}
+        DEPLOY_TOKEN: ${{ inputs.deploy-token }}
+        RESOURCE_UUID: ${{ inputs.resource-uuid }}
+        IS_PREVIEW: ${{ inputs.is-preview }}
+      run: |
+        jq -n --arg token "${BOT_TOKEN}" --argjson preview "${IS_PREVIEW}" \
+          '{data: [{key: "BOT_TOKEN", value: $token, is_runtime: true, is_buildtime: false, is_preview: $preview}]}' |
+        curl --fail --silent --show-error --request PATCH \
+          --header "Authorization: Bearer ${DEPLOY_TOKEN}" \
+          --header "Content-Type: application/json" \
+          --data @- \
+          "${DEPLOY_HOST}/api/v1/applications/${RESOURCE_UUID}/envs/bulk"
