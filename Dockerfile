@@ -11,5 +11,8 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
 
+ARG COMMIT_HASH=unknown
+ENV COMMIT_HASH=$COMMIT_HASH
+
 EXPOSE 8080
 CMD ["pnpm", "start"]

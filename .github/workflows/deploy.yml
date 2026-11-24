@@ -33,8 +33,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve lowercase image name
-        run: echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - name: Resolve image name and commit hash
+        run: |
+          echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "COMMIT_HASH=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
       - id: meta
         uses: docker/metadata-action@v5
@@ -48,6 +50,8 @@ jobs:
         with:
           context: .
           platforms: linux/arm64
+          build-args: |
+            COMMIT_HASH=${{ env.COMMIT_HASH }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
