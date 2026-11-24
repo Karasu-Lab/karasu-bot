@@ -3,14 +3,18 @@ name: Deploy
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 concurrency:
-  group: deploy
+  group: deploy-${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
   cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
+  IS_PREVIEW: ${{ github.event_name == 'pull_request' }}
+  TARGET_UUID: ${{ github.event_name == 'pull_request' && vars.PREVIEW_RESOURCE_UUID || vars.RESOURCE_UUID }}
 
 jobs:
   build:
@@ -34,16 +38,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve image name and commit hash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          SHA="${PR_HEAD_SHA:-$GITHUB_SHA}"
           echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "COMMIT_HASH=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "COMMIT_HASH=${SHA::7}" >> "$GITHUB_ENV"
 
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ env.IS_PREVIEW == 'false' }}
+            type=ref,event=pr
             type=sha
 
       - uses: docker/build-push-action@v6
@@ -58,16 +66,70 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
 
-  deploy:
+  repository:
     runs-on: ubuntu-latest
-    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/sync-bot-token
+        with:
+          bot-token: ${{ secrets.BOT_TOKEN }}
+          deploy-host: ${{ vars.DEPLOY_HOST }}
+          deploy-token: ${{ secrets.DEPLOY_TOKEN }}
+          resource-uuid: ${{ env.TARGET_UUID }}
+
+  preview:
+    runs-on: ubuntu-latest
+    needs: repository
+    environment: preview
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/sync-bot-token
+        with:
+          bot-token: ${{ secrets.BOT_TOKEN }}
+          deploy-host: ${{ vars.DEPLOY_HOST }}
+          deploy-token: ${{ secrets.DEPLOY_TOKEN }}
+          resource-uuid: ${{ env.TARGET_UUID }}
+
+  production:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    needs: preview
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/sync-bot-token
+        with:
+          bot-token: ${{ secrets.BOT_TOKEN }}
+          deploy-host: ${{ vars.DEPLOY_HOST }}
+          deploy-token: ${{ secrets.DEPLOY_TOKEN }}
+          resource-uuid: ${{ env.TARGET_UUID }}
+
+  deploy:
+    if: >-
+      ${{ !cancelled()
+      && needs.build.result == 'success'
+      && needs.preview.result == 'success'
+      && contains(fromJSON('["success", "skipped"]'), needs.production.result) }}
+    runs-on: ubuntu-latest
+    needs: [build, preview, production]
     steps:
       - name: Trigger Coolify deployment
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          RESOURCE_UUID: ${{ vars.RESOURCE_UUID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          if [ "${IS_PREVIEW}" = "true" ]; then
+            jq -n --arg tag "pr-${PR_NUMBER}" '{docker_registry_image_tag: $tag}' |
+            curl --fail --silent --show-error --request PATCH \
+              --header "Authorization: Bearer ${DEPLOY_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data @- \
+              "${DEPLOY_HOST}/api/v1/applications/${TARGET_UUID}"
+          fi
           curl --fail --silent --show-error --request POST \
             --header "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            "${DEPLOY_HOST}/api/v1/deploy?uuid=${RESOURCE_UUID}&force=false"
+            "${DEPLOY_HOST}/api/v1/deploy?uuid=${TARGET_UUID}&force=false"
