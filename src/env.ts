@@ -9,6 +9,8 @@ const envSchema = z.object({
       "must be a git commit hash or 'unknown'",
     )
     .default("unknown"),
+  BOT_TOKEN: z.string().min(1),
+  BOT_PORT: z.coerce.number().int().min(1).max(65535).default(8081),
 });
 
 const parsed = envSchema.safeParse(process.env);
