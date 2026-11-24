@@ -12,9 +12,6 @@ inputs:
     required: true
   resource-uuid:
     required: true
-  is-preview:
-    description: Store the variable for preview deployments
-    required: true
 
 runs:
   using: composite
@@ -26,10 +23,9 @@ runs:
         DEPLOY_HOST: ${{ inputs.deploy-host }}
         DEPLOY_TOKEN: ${{ inputs.deploy-token }}
         RESOURCE_UUID: ${{ inputs.resource-uuid }}
-        IS_PREVIEW: ${{ inputs.is-preview }}
       run: |
-        jq -n --arg token "${BOT_TOKEN}" --argjson preview "${IS_PREVIEW}" \
-          '{data: [{key: "BOT_TOKEN", value: $token, is_runtime: true, is_buildtime: false, is_preview: $preview}]}' |
+        jq -n --arg token "${BOT_TOKEN}" \
+          '{data: [{key: "BOT_TOKEN", value: $token, is_runtime: true, is_buildtime: false}]}' |
         curl --fail --silent --show-error --request PATCH \
           --header "Authorization: Bearer ${DEPLOY_TOKEN}" \
           --header "Content-Type: application/json" \
