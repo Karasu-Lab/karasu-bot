@@ -1,3 +1,4 @@
+import { config } from "dotenv";
 import { z } from "zod";
 
 const port = z.coerce.number().int().min(1).max(65535);
@@ -33,4 +34,8 @@ const parse = <T extends z.ZodType>(schema: T): z.infer<T> => {
 
 export const env = parse(apiSchema);
 
-export const loadBotEnv = () => parse(botSchema);
+export const loadBotEnv = () => {
+  config({ path: ".env.local", quiet: true });
+
+  return parse(botSchema);
+};
