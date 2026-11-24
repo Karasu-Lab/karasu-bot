@@ -1,9 +1,24 @@
 import { Elysia } from "elysia";
-import { isBotOnline } from "../../bot/bot";
+import { env } from "../../env";
 
-export const healthCheck = new Elysia().get("/health/check", ({ set }) => {
-  const online = isBotOnline();
-  if (!online) set.status = 503;
+const isBotOnline = async () => {
+  try {
+    const response = await fetch(`http://127.0.0.1:${env.BOT_PORT}/`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    const body = (await response.json()) as { ready?: boolean };
+    return body.ready === true;
+  } catch {
+    return false;
+  }
+};
 
-  return { status: online ? "healthy" : "unhealthy" };
-});
+export const healthCheck = new Elysia().get(
+  "/health/check",
+  async ({ set }) => {
+    const online = await isBotOnline();
+    if (!online) set.status = 503;
+
+    return { status: online ? "healthy" : "unhealthy" };
+  },
+);

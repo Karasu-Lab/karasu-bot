@@ -1,7 +1,10 @@
 import { z } from "zod";
 
-const envSchema = z.object({
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+const port = z.coerce.number().int().min(1).max(65535);
+
+const apiSchema = z.object({
+  PORT: port.default(3000),
+  BOT_PORT: port.default(8081),
   COMMIT_HASH: z
     .string()
     .regex(
@@ -9,16 +12,25 @@ const envSchema = z.object({
       "must be a git commit hash or 'unknown'",
     )
     .default("unknown"),
-  BOT_TOKEN: z.string().min(1),
-  BOT_PORT: z.coerce.number().int().min(1).max(65535).default(8081),
 });
 
-const parsed = envSchema.safeParse(process.env);
+const botSchema = z.object({
+  BOT_PORT: port.default(8081),
+  BOT_TOKEN: z.string().min(1),
+});
 
-if (!parsed.success) {
-  throw new Error(
-    `Invalid environment variables:\n${z.prettifyError(parsed.error)}`,
-  );
-}
+const parse = <T extends z.ZodType>(schema: T): z.infer<T> => {
+  const parsed = schema.safeParse(process.env);
 
-export const env = parsed.data;
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid environment variables:\n${z.prettifyError(parsed.error)}`,
+    );
+  }
+
+  return parsed.data;
+};
+
+export const env = parse(apiSchema);
+
+export const loadBotEnv = () => parse(botSchema);

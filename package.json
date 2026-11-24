@@ -9,8 +9,8 @@
     }
   },
   "scripts": {
-    "dev": "tsx watch ./src/app.ts",
-    "start": "tsx ./src/app.ts"
+    "dev": "concurrently -n api,bot \"tsx watch ./src/app.ts\" \"tsx watch ./src/bot/bot.ts\"",
+    "start": "concurrently -n api,bot \"tsx ./src/app.ts\" \"tsx ./src/bot/bot.ts\""
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@elysiajs/node": "1",
+    "concurrently": "^10.0.7",
     "discord.js": "^14.28.1",
     "elysia": "1",
     "zod": "^4.6.7"
